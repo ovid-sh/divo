@@ -1,0 +1,45 @@
+body {
+  margin: 0 auto;
+  max-width: 40rem;
+  padding: 2.5rem 1.25rem 4rem;
+  font: 1.05rem/1.6 Georgia, "Iowan Old Style", Palatino, serif;
+  color: #1c1915;
+  background: #f6f3ec;
+}
+
+header {
+  margin-bottom: 0.5rem;
+}
+
+header a {
+  color: inherit;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.meta {
+  margin-top: 0;
+  color: #6e675c;
+  font-size: 0.9rem;
+}
+
+a {
+  color: #0b4f6c;
+}
+
+code, pre {
+  font-family: ui-monospace, "IBM Plex Mono", monospace;
+  font-size: 0.92rem;
+}
+
+pre {
+  padding: 0.8rem 1rem;
+  overflow: auto;
+  background: #efeae0;
+}
+
+nav {
+  margin-top: 2.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid #ddd6c8;
+}
