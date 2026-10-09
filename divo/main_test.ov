@@ -1,0 +1,66 @@
+package divo
+
+import bytes
+import fs
+import ovid/io
+import ovid/mem
+
+func Put(io *ovid/io.Cap, path i64, pathn i64, data i64, datan i64) i64 {
+  return fs.Write(io, path, pathn, data, datan)
+}
+
+func TestBuild(io *ovid/io.Cap) i64 {
+  var cfg i64 = strptr("title: Divo Notes\n")
+  if Put(io, strptr("site/config.txt"), strlen("site/config.txt"), cfg, strlen("title: Divo Notes\n")) != 0 {
+    return 1
+  }
+  var tpl i64 = strptr("<title>{{title}} - {{site_title}}</title>\n{{body}}\n{{pages}}\n")
+  var tpln i64 = strlen("<title>{{title}} - {{site_title}}</title>\n{{body}}\n{{pages}}\n")
+  if Put(io, strptr("site/templates/page.html"), strlen("site/templates/page.html"), tpl, tpln) != 0 {
+    return 2
+  }
+  var index i64 = strptr("---\ntitle: Home\ndate: 2026-10-01\n---\n# Home\n")
+  if Put(io, strptr("site/content/index.md"), strlen("site/content/index.md"), index, strlen("---\ntitle: Home\ndate: 2026-10-01\n---\n# Home\n")) != 0 {
+    return 3
+  }
+  var hello i64 = strptr("---\ntitle: Hello\ndate: 2026-10-09\n---\nSay **bold** and `x < y`.\n")
+  var hellon i64 = strlen("---\ntitle: Hello\ndate: 2026-10-09\n---\nSay **bold** and `x < y`.\n")
+  if Put(io, strptr("site/content/blog/hello.md"), strlen("site/content/blog/hello.md"), hello, hellon) != 0 {
+    return 4
+  }
+  if Put(io, strptr("site/static/style.css"), strlen("site/static/style.css"), strptr("body{}\n"), strlen("body{}\n")) != 0 {
+    return 5
+  }
+  if Build(io, strptr("site"), 4) != 0 {
+    return 6
+  }
+  var home *fs.Blob = fs.Read(io, strptr("site/public/index.html"), strlen("site/public/index.html"))
+  if home.err != 0 {
+    return 7
+  }
+  var want i64 = strptr("href=\"/blog/hello/\">Hello</a></li>\n<li><a href=\"/\">Home</a>")
+  var wantn i64 = strlen("href=\"/blog/hello/\">Hello</a></li>\n<li><a href=\"/\">Home</a>")
+  if bytes.Index(home.p, home.n, want, wantn) < 0 {
+    ovid/io.Stderr(home.p, home.n)
+    ovid/io.Eprint(strptr("\n"))
+    return 8
+  }
+  if bytes.Index(home.p, home.n, strptr("<title>Home - Divo Notes</title>"), strlen("<title>Home - Divo Notes</title>")) < 0 {
+    return 9
+  }
+  var post *fs.Blob = fs.Read(io, strptr("site/public/blog/hello/index.html"), strlen("site/public/blog/hello/index.html"))
+  if post.err != 0 {
+    return 10
+  }
+  if bytes.Index(post.p, post.n, strptr("<strong>bold</strong>"), strlen("<strong>bold</strong>")) < 0 {
+    return 11
+  }
+  if bytes.Index(post.p, post.n, strptr("<code>x &lt; y</code>"), strlen("<code>x &lt; y</code>")) < 0 {
+    return 12
+  }
+  var css *fs.Blob = fs.Read(io, strptr("site/public/style.css"), strlen("site/public/style.css"))
+  if css.err != 0 || !ovid/mem.Eq(css.p, css.n, strptr("body{}\n"), strlen("body{}\n")) {
+    return 13
+  }
+  return 0
+}

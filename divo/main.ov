@@ -1,0 +1,184 @@
+package divo
+
+import bytes
+import fs
+import html
+import ovid/io
+import ovid/mem
+
+// divo builds a directory of markdown into HTML.
+//
+//   divo build [site]
+//
+// site defaults to ".". It reads config.txt, content/**/*.md, and
+// templates/page.html, copies static/ if it is there, and writes public/.
+//
+// Run the built binary, or `ovid run --no-confine`. Plain `ovid run`
+// confines writes to a fresh directory, so public/ would not land on disk.
+
+func main(io *ovid/io.Cap) i64 {
+  var argc i64 = ovid/io.Argc(io)
+  var cmd i64 = 0
+  if argc >= 2 {
+    cmd = ovid/io.Arg(io, 1)
+  }
+  var build bool = cmd != 0 && ovid/mem.Eq(cmd, ovid/io.CLen(cmd), strptr("build"), 5)
+  if !build || argc > 3 {
+    ovid/io.Eprint(strptr("usage: divo build [site]\n"))
+    return 64
+  }
+  var site i64 = strptr(".")
+  var siten i64 = 1
+  if argc == 3 {
+    site = ovid/io.Arg(io, 2)
+    siten = ovid/io.CLen(site)
+  }
+  return Build(io, site, siten)
+}
+
+func FailPath(io *ovid/io.Cap, what i64, path i64, pathn i64, e i64) i64 {
+  ovid/io.Eprint(strptr("divo: "))
+  ovid/io.Eprint(what)
+  ovid/io.Stderr(path, pathn)
+  ovid/io.Eprint(strptr(": "))
+  ovid/io.Eprint(ovid/io.ErrText(e))
+  ovid/io.Eprint(strptr("\n"))
+  return 1
+}
+
+func SiteLen(site i64, siten i64) i64 {
+  while siten > 1 && load8((site + siten) - 1) == 47 {
+    siten = siten - 1
+  }
+  return siten
+}
+
+func Insert(head *html.Page, p *html.Page) *html.Page {
+  if head == 0 as *html.Page || html.Before(p, head) {
+    p.next = head
+    return p
+  }
+  var c *html.Page = head
+  while c.next != 0 as *html.Page && !html.Before(p, c.next) {
+    c = c.next
+  }
+  p.next = c.next
+  c.next = p
+  return head
+}
+
+func Build(io *ovid/io.Cap, site i64, siten i64) i64 {
+  siten = SiteLen(site, siten)
+  var dir bool, de i64 = ovid/io.IsDir(io, site, siten)
+  if de != 0 || !dir {
+    ovid/io.Eprint(strptr("divo: not a directory: "))
+    ovid/io.Stderr(site, siten)
+    ovid/io.Eprint(strptr("\n"))
+    return 1
+  }
+  var cfgPath *bytes.Span = bytes.Join(io, site, siten, strptr("config.txt"), strlen("config.txt"))
+  var cfgBlob *fs.Blob = fs.Read(io, cfgPath.p, cfgPath.n)
+  if cfgBlob.err != 0 {
+    return FailPath(io, strptr("cannot read "), cfgPath.p, cfgPath.n, cfgBlob.err)
+  }
+  var conf *html.Conf = html.ParseConfig(io, cfgBlob.p, cfgBlob.n)
+  if !conf.ok {
+    ovid/io.Eprint(strptr("divo: config.txt needs a title\n"))
+    return 1
+  }
+  var tplPath *bytes.Span = bytes.Join(io, site, siten, strptr("templates/page.html"), strlen("templates/page.html"))
+  var tpl *fs.Blob = fs.Read(io, tplPath.p, tplPath.n)
+  if tpl.err != 0 {
+    return FailPath(io, strptr("cannot read "), tplPath.p, tplPath.n, tpl.err)
+  }
+  var content *bytes.Span = bytes.Join(io, site, siten, strptr("content"), strlen("content"))
+  var list *fs.List = fs.Walk(io, content.p, content.n, strptr(".md"), 3)
+  if list.err != 0 {
+    var ep i64 = list.errp
+    var en i64 = list.errn
+    if en == 0 {
+      ep = content.p
+      en = content.n
+    }
+    return FailPath(io, strptr("cannot read "), ep, en, list.err)
+  }
+  var head *html.Page = 0 as *html.Page
+  var f *fs.File = list.head
+  var count i64 = 0
+  while f != 0 as *fs.File {
+    var full *bytes.Span = bytes.Join(io, content.p, content.n, f.rel, f.reln)
+    var blob *fs.Blob = fs.Read(io, full.p, full.n)
+    if blob.err != 0 {
+      return FailPath(io, strptr("cannot read "), full.p, full.n, blob.err)
+    }
+    var doc *html.Doc = html.Split(io, blob.p, blob.n)
+    var page *html.Page = ovid/io.Alloc(io, sizeof(html.Page)) as *html.Page
+    if doc.titlen > 0 {
+      page.title = doc.title
+      page.titlen = doc.titlen
+    } else {
+      var fb *bytes.Span = html.FallbackTitle(io, doc.body, doc.bodyn, f.rel, f.reln)
+      page.title = fb.p
+      page.titlen = fb.n
+    }
+    page.date = doc.date
+    page.daten = doc.daten
+    var href *bytes.Span = html.URL(io, f.rel, f.reln)
+    page.href = href.p
+    page.hrefn = href.n
+    page.rel = f.rel
+    page.reln = f.reln
+    page.root = strptr("/")
+    page.rootn = 1
+    page.site = conf.title
+    page.siten = conf.titlen
+    var rendered *ovid/mem.Buf = html.Markdown(io, doc.body, doc.bodyn)
+    page.body = rendered.data
+    page.bodyn = rendered.len
+    head = Insert(head, page)
+    count = count + 1
+    f = f.next
+  }
+  var nav *ovid/mem.Buf = html.Nav(io, head)
+  var p *html.Page = head
+  while p != 0 as *html.Page {
+    p.nav = nav.data
+    p.navn = nav.len
+    p = p.next
+  }
+  var public *bytes.Span = bytes.Join(io, site, siten, strptr("public"), strlen("public"))
+  var me i64 = fs.MkdirAll(io, public.p)
+  if me != 0 {
+    return FailPath(io, strptr("cannot create "), public.p, public.n, me)
+  }
+  // Inputs stay. Each rendered page is allocated after this mark and
+  // dropped after it is written, so the heap does not keep every HTML
+  // file at once. Ovid has no per-block free; the mark is the free.
+  var mark *ovid/io.HeapMark = ovid/io.MarkHeap(io)
+  var page *html.Page = head
+  while page != 0 as *html.Page {
+    var out *ovid/mem.Buf = html.Apply(io, tpl.p, tpl.n, page)
+    var rel *bytes.Span = html.OutRel(io, page.href, page.hrefn)
+    var dest *bytes.Span = bytes.Join(io, public.p, public.n, rel.p, rel.n)
+    var we i64 = fs.Write(io, dest.p, dest.n, out.data, out.len)
+    if we != 0 {
+      return FailPath(io, strptr("cannot write "), dest.p, dest.n, we)
+    }
+    ovid/io.Print(strptr("page "))
+    ovid/io.Stdout(page.href, page.hrefn)
+    ovid/io.Print(strptr("\n"))
+    ovid/io.ResetHeap(io, mark)
+    page = page.next
+  }
+  var staticSrc *bytes.Span = bytes.Join(io, site, siten, strptr("static"), strlen("static"))
+  var ce i64 = fs.CopyTree(io, staticSrc.p, staticSrc.n, public.p, public.n)
+  if ce != 0 {
+    return FailPath(io, strptr("cannot copy "), staticSrc.p, staticSrc.n, ce)
+  }
+  ovid/io.Print(strptr("divo: "))
+  ovid/io.PrintInt(io, count)
+  ovid/io.Print(strptr(" pages -> "))
+  ovid/io.Stdout(public.p, public.n)
+  ovid/io.Print(strptr("\n"))
+  return 0
+}
