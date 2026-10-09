@@ -1,0 +1,90 @@
+package fs
+
+import ovid/io
+import ovid/mem
+
+func Has(f *File, lit i64, n i64) bool {
+  var c *File = f
+  while c != 0 as *File {
+    if ovid/mem.Eq(c.rel, c.reln, lit, n) {
+      return true
+    }
+    c = c.next
+  }
+  return false
+}
+
+func Count(f *File) i64 {
+  var n i64 = 0
+  var c *File = f
+  while c != 0 as *File {
+    n = n + 1
+    c = c.next
+  }
+  return n
+}
+
+func TestRoundTrip(io *ovid/io.Cap) i64 {
+  var path i64 = strptr("fs-round/sub/t.txt")
+  var pn i64 = strlen("fs-round/sub/t.txt")
+  var e i64 = Write(io, path, pn, strptr("hi\n"), 3)
+  if e != 0 {
+    ovid/io.Eprint(ovid/io.ErrText(e))
+    ovid/io.Eprint(strptr("\n"))
+    return 1
+  }
+  var b *Blob = Read(io, path, pn)
+  if b.err != 0 || !ovid/mem.Eq(b.p, b.n, strptr("hi\n"), 3) {
+    return 2
+  }
+  return 0
+}
+
+func TestWalk(io *ovid/io.Cap) i64 {
+  if Write(io, strptr("fs-walk/a.md"), strlen("fs-walk/a.md"), strptr("a"), 1) != 0 {
+    return 1
+  }
+  if Write(io, strptr("fs-walk/sub/b.md"), strlen("fs-walk/sub/b.md"), strptr("b"), 1) != 0 {
+    return 2
+  }
+  if Write(io, strptr("fs-walk/skip.txt"), strlen("fs-walk/skip.txt"), strptr("s"), 1) != 0 {
+    return 3
+  }
+  var list *List = Walk(io, strptr("fs-walk"), strlen("fs-walk"), strptr(".md"), 3)
+  if list.err != 0 {
+    ovid/io.Eprint(ovid/io.ErrText(list.err))
+    ovid/io.Eprint(strptr("\n"))
+    return 4
+  }
+  if Count(list.head) != 2 {
+    return 5
+  }
+  if !Has(list.head, strptr("a.md"), 4) || !Has(list.head, strptr("sub/b.md"), strlen("sub/b.md")) {
+    return 6
+  }
+  return 0
+}
+
+func TestCopy(io *ovid/io.Cap) i64 {
+  if Write(io, strptr("fs-copy-src/a.txt"), strlen("fs-copy-src/a.txt"), strptr("A"), 1) != 0 {
+    return 1
+  }
+  if Write(io, strptr("fs-copy-src/d/b.txt"), strlen("fs-copy-src/d/b.txt"), strptr("B"), 1) != 0 {
+    return 2
+  }
+  var e i64 = CopyTree(io, strptr("fs-copy-src"), strlen("fs-copy-src"), strptr("fs-copy-dst"), strlen("fs-copy-dst"))
+  if e != 0 {
+    return 3
+  }
+  var a *Blob = Read(io, strptr("fs-copy-dst/a.txt"), strlen("fs-copy-dst/a.txt"))
+  var b *Blob = Read(io, strptr("fs-copy-dst/d/b.txt"), strlen("fs-copy-dst/d/b.txt"))
+  if a.err != 0 || b.err != 0 || a.n != 1 || load8(b.p) != 66 {
+    return 4
+  }
+  var missing i64 = CopyTree(io, strptr("fs-copy-nope"), strlen("fs-copy-nope"), strptr("fs-copy-dst"), strlen("fs-copy-dst"))
+  if missing != 0 {
+    return 5
+  }
+  return 0
+}
+

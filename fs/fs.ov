@@ -1,0 +1,241 @@
+package fs
+
+import bytes
+import ovid/io
+import ovid/mem
+
+// File is one walked file. rel is its path under the walk root, with "/"
+// between pieces, and no leading slash.
+type File struct {
+  rel i64
+  reln i64
+  next *File
+}
+
+// List is the files Walk found. On failure err is an ovid/io error code and
+// errp names the directory or file that failed.
+type List struct {
+  head *File
+  err i64
+  errp i64
+  errn i64
+}
+
+// Blob is a whole file, or an error code and no bytes.
+type Blob struct {
+  p i64
+  n i64
+  err i64
+}
+
+type Ctx struct {
+  io *ovid/io.Cap
+  suf i64
+  sufn i64
+  head *File
+  tail *File
+  err i64
+  errp i64
+  errn i64
+}
+
+func setErr(c *Ctx, e i64, path i64) i64 {
+  if c.err == 0 {
+    c.err = e
+    c.errp = path
+    c.errn = ovid/io.CLen(path)
+  }
+  return e
+}
+
+// Walk lists files under root whose names end in suf. sufn 0 keeps every
+// file. Names starting with "." are skipped. Directories are walked, not
+// returned. Symlinks are skipped. The result is in directory order, not
+// sorted: getdents is not sorted, and a caller that cares sorts afterwards.
+func Walk(io *ovid/io.Cap, root i64, rootn i64, suf i64, sufn i64) *List {
+  var c *Ctx = ovid/io.Alloc(io, sizeof(Ctx)) as *Ctx
+  c.io = io
+  c.suf = suf
+  c.sufn = sufn
+  var abs i64 = ovid/io.CStr(io, root, rootn)
+  walk(c, abs, 0, 0)
+  var out *List = ovid/io.Alloc(io, sizeof(List)) as *List
+  out.head = c.head
+  out.err = c.err
+  out.errp = c.errp
+  out.errn = c.errn
+  return out
+}
+
+func addFile(c *Ctx, relp i64, reln i64) i64 {
+  var f *File = ovid/io.Alloc(c.io, sizeof(File)) as *File
+  f.rel = relp
+  f.reln = reln
+  if c.tail == 0 as *File {
+    c.head = f
+  } else {
+    c.tail.next = f
+  }
+  c.tail = f
+  return 0
+}
+
+// walk reads one directory. Names are copied out of the getdents buffer
+// before the next record or the recursive call: the next Getdents reuses
+// the buffer, and a name left pointing into it would change underfoot.
+func walk(c *Ctx, abs i64, relp i64, reln i64) i64 {
+  if c.err != 0 {
+    return c.err
+  }
+  var fd i64, e i64 = ovid/io.Open(abs, ovid/io.O_DIRECTORY, 0)
+  if e != 0 {
+    return setErr(c, e, abs)
+  }
+  var buf i64 = ovid/io.Alloc(c.io, 32768)
+  var r i64, re i64 = ovid/io.Getdents(fd, buf, 32768)
+  if re != 0 {
+    setErr(c, re, abs)
+    r = 0
+  }
+  while r > 0 && c.err == 0 {
+    var o i64 = 0
+    while o < r && c.err == 0 {
+      var rec i64 = buf + o
+      var reclen i64 = load8(rec + 16) | (load8(rec + 17) << 8)
+      if reclen < 20 {
+        setErr(c, ovid/io.E_INVAL, abs)
+      } else {
+        var nm i64 = rec + 19
+        var nn i64 = ovid/io.CLen(nm)
+        var hidden bool = nn > 0 && load8(nm) == 46
+        if !hidden {
+          var kind i64 = load8(rec + 18)
+          var child *bytes.Span = bytes.Join(c.io, abs, ovid/io.CLen(abs), nm, nn)
+          var crel *bytes.Span = bytes.Join(c.io, relp, reln, nm, nn)
+          var isdir bool = kind == 4
+          if kind == 0 {
+            var d bool, de i64 = ovid/io.IsDir(c.io, child.p, child.n)
+            if de != 0 {
+              setErr(c, de, child.p)
+            }
+            isdir = d
+          }
+          if c.err == 0 && isdir {
+            walk(c, child.p, crel.p, crel.n)
+          } else if c.err == 0 && kind != 10 {
+            var take bool = c.sufn == 0 || bytes.HasSuffix(nm, nn, c.suf, c.sufn)
+            if take {
+              addFile(c, crel.p, crel.n)
+            }
+          }
+        }
+        o = o + reclen
+      }
+    }
+    if c.err == 0 {
+      r, re = ovid/io.Getdents(fd, buf, 32768)
+      if re != 0 {
+        setErr(c, re, abs)
+        r = 0
+      }
+    }
+  }
+  ovid/io.Close(fd)
+  return c.err
+}
+
+// MkdirAll creates path and every parent. An existing directory is not an
+// error. path is NUL-terminated.
+func MkdirAll(io *ovid/io.Cap, path i64) i64 {
+  var n i64 = ovid/io.CLen(path)
+  var i i64 = 0
+  while i < n {
+    if load8(path + i) == 47 && i > 0 {
+      var e i64 = mkdirLen(io, path, i)
+      if e != 0 && e != ovid/io.E_EXIST {
+        return e
+      }
+    }
+    i = i + 1
+  }
+  var e i64 = ovid/io.Mkdir(path)
+  if e != 0 && e != ovid/io.E_EXIST {
+    return e
+  }
+  return 0
+}
+
+func mkdirLen(io *ovid/io.Cap, path i64, n i64) i64 {
+  var p i64 = ovid/io.Alloc(io, n + 1)
+  ovid/mem.Copy(p, path, n)
+  store8(p + n, 0)
+  return ovid/io.Mkdir(p)
+}
+
+func MkParent(io *ovid/io.Cap, path i64) i64 {
+  var n i64 = ovid/io.CLen(path)
+  var d i64 = ovid/io.DirLen(path, n)
+  if d <= 1 {
+    return 0
+  }
+  var p i64 = ovid/io.Alloc(io, d)
+  ovid/mem.Copy(p, path, d - 1)
+  store8(p + (d - 1), 0)
+  return MkdirAll(io, p)
+}
+
+func Read(io *ovid/io.Cap, path i64, pathn i64) *Blob {
+  var b *Blob = ovid/io.Alloc(io, sizeof(Blob)) as *Blob
+  var nn i64 = ovid/io.Alloc(io, 8)
+  var data i64, e i64 = ovid/io.ReadFile(io, path, pathn, nn)
+  b.err = e
+  if e == 0 {
+    b.p = data
+    b.n = load64(nn)
+  }
+  return b
+}
+
+// Write creates parent directories and replaces path with data, mode 0644.
+func Write(io *ovid/io.Cap, path i64, pathn i64, data i64, datan i64) i64 {
+  var cs i64 = ovid/io.CStr(io, path, pathn)
+  var e i64 = MkParent(io, cs)
+  if e != 0 {
+    return e
+  }
+  return ovid/io.WriteFile(io, path, pathn, data, datan, 420)
+}
+
+// CopyTree copies every file under src into dst, keeping relative paths.
+// A missing src is success and copies nothing: static/ is optional.
+func CopyTree(io *ovid/io.Cap, src i64, srcn i64, dst i64, dstn i64) i64 {
+  var isdir bool, e i64 = ovid/io.IsDir(io, src, srcn)
+  if e == ovid/io.E_NOENT {
+    return 0
+  }
+  if e != 0 {
+    return e
+  }
+  if !isdir {
+    return ovid/io.E_NOTDIR
+  }
+  var list *List = Walk(io, src, srcn, 0, 0)
+  if list.err != 0 {
+    return list.err
+  }
+  var f *File = list.head
+  while f != 0 as *File {
+    var from *bytes.Span = bytes.Join(io, src, srcn, f.rel, f.reln)
+    var to *bytes.Span = bytes.Join(io, dst, dstn, f.rel, f.reln)
+    var blob *Blob = Read(io, from.p, from.n)
+    if blob.err != 0 {
+      return blob.err
+    }
+    var we i64 = Write(io, to.p, to.n, blob.p, blob.n)
+    if we != 0 {
+      return we
+    }
+    f = f.next
+  }
+  return 0
+}
