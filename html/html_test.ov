@@ -1,0 +1,177 @@
+package html
+
+import bytes
+import ovid/io
+import ovid/mem
+
+func Same(io *ovid/io.Cap, got i64, gotn i64, want i64, wantn i64) bool {
+  if ovid/mem.Eq(got, gotn, want, wantn) {
+    return true
+  }
+  ovid/io.Eprint(strptr("got ("))
+  ovid/io.WriteInt(io, 2, gotn)
+  ovid/io.Eprint(strptr("):\n"))
+  ovid/io.Stderr(got, gotn)
+  ovid/io.Eprint(strptr("\nwant ("))
+  ovid/io.WriteInt(io, 2, wantn)
+  ovid/io.Eprint(strptr("):\n"))
+  ovid/io.Stderr(want, wantn)
+  ovid/io.Eprint(strptr("\n"))
+  return false
+}
+
+func Md(io *ovid/io.Cap, src i64, n i64, want i64, wn i64) bool {
+  var b *ovid/mem.Buf = Markdown(io, src, n)
+  return Same(io, b.data, b.len, want, wn)
+}
+
+func TestMarkdownPara(io *ovid/io.Cap) i64 {
+  var s i64 = strptr("Hello\n\nWorld\n")
+  var w i64 = strptr("<p>Hello</p>\n<p>World</p>\n")
+  if !Md(io, s, strlen("Hello\n\nWorld\n"), w, strlen("<p>Hello</p>\n<p>World</p>\n")) {
+    return 1
+  }
+  var t i64 = strptr("Hello\nworld\n")
+  var u i64 = strptr("<p>Hello\nworld</p>\n")
+  if !Md(io, t, strlen("Hello\nworld\n"), u, strlen("<p>Hello\nworld</p>\n")) {
+    return 2
+  }
+  return 0
+}
+
+func TestMarkdownInline(io *ovid/io.Cap) i64 {
+  var s i64 = strptr("a < b & c \"d\"\n")
+  var w i64 = strptr("<p>a &lt; b &amp; c &quot;d&quot;</p>\n")
+  if !Md(io, s, strlen("a < b & c \"d\"\n"), w, strlen("<p>a &lt; b &amp; c &quot;d&quot;</p>\n")) {
+    return 1
+  }
+  var t i64 = strptr("say **hi** and `x < y` and [a](b\"c)\n")
+  var u i64 = strptr("<p>say <strong>hi</strong> and <code>x &lt; y</code> and <a href=\"b&quot;c\">a</a></p>\n")
+  if !Md(io, t, strlen("say **hi** and `x < y` and [a](b\"c)\n"), u, strlen("<p>say <strong>hi</strong> and <code>x &lt; y</code> and <a href=\"b&quot;c\">a</a></p>\n")) {
+    return 2
+  }
+  var v i64 = strptr("**no\n")
+  var x i64 = strptr("<p>**no</p>\n")
+  if !Md(io, v, strlen("**no\n"), x, strlen("<p>**no</p>\n")) {
+    return 3
+  }
+  return 0
+}
+
+func TestMarkdownBlocks(io *ovid/io.Cap) i64 {
+  var s i64 = strptr("# Title\n\nHello **world**.\n\n- one\n- two\n\n```\ncode <\n```\n\n---\n\nAfter.\n")
+  var w i64 = strptr("<h1>Title</h1>\n<p>Hello <strong>world</strong>.</p>\n<ul>\n<li>one</li>\n<li>two</li>\n</ul>\n<pre><code>code &lt;\n</code></pre>\n<hr>\n<p>After.</p>\n")
+  if !Md(io, s, strlen("# Title\n\nHello **world**.\n\n- one\n- two\n\n```\ncode <\n```\n\n---\n\nAfter.\n"), w, strlen("<h1>Title</h1>\n<p>Hello <strong>world</strong>.</p>\n<ul>\n<li>one</li>\n<li>two</li>\n</ul>\n<pre><code>code &lt;\n</code></pre>\n<hr>\n<p>After.</p>\n")) {
+    return 1
+  }
+  var t i64 = strptr("## Sub\n\n### Third\n")
+  var u i64 = strptr("<h2>Sub</h2>\n<h3>Third</h3>\n")
+  if !Md(io, t, strlen("## Sub\n\n### Third\n"), u, strlen("<h2>Sub</h2>\n<h3>Third</h3>\n")) {
+    return 2
+  }
+  return 0
+}
+
+func TestFront(io *ovid/io.Cap) i64 {
+  var s i64 = strptr("---\ntitle: Hello\ndate: 2026-10-09\n---\n# Hi\n")
+  var n i64 = strlen("---\ntitle: Hello\ndate: 2026-10-09\n---\n# Hi\n")
+  var d *Doc = Split(io, s, n)
+  if !ovid/mem.Eq(d.title, d.titlen, strptr("Hello"), 5) {
+    return 1
+  }
+  if !ovid/mem.Eq(d.date, d.daten, strptr("2026-10-09"), strlen("2026-10-09")) {
+    return 2
+  }
+  if !ovid/mem.Eq(d.body, d.bodyn, strptr("# Hi\n"), strlen("# Hi\n")) {
+    return 3
+  }
+  var t i64 = strptr("# Hi\n")
+  var e *Doc = Split(io, t, strlen("# Hi\n"))
+  if e.titlen != 0 || !ovid/mem.Eq(e.body, e.bodyn, t, strlen("# Hi\n")) {
+    return 4
+  }
+  var u i64 = strptr("---\ntitle: X\nno close\n")
+  var f *Doc = Split(io, u, strlen("---\ntitle: X\nno close\n"))
+  if f.titlen != 0 || f.bodyn != strlen("---\ntitle: X\nno close\n") {
+    return 5
+  }
+  return 0
+}
+
+func TestConfig(io *ovid/io.Cap) i64 {
+  var s i64 = strptr("# comment\n\ntitle: Divo Notes\n")
+  var c *Conf = ParseConfig(io, s, strlen("# comment\n\ntitle: Divo Notes\n"))
+  if !c.ok || !ovid/mem.Eq(c.title, c.titlen, strptr("Divo Notes"), strlen("Divo Notes")) {
+    return 1
+  }
+  var t i64 = strptr("name: x\n")
+  var d *Conf = ParseConfig(io, t, strlen("name: x\n"))
+  if d.ok {
+    return 2
+  }
+  return 0
+}
+
+func TestURL(io *ovid/io.Cap) i64 {
+  var a *bytes.Span = URL(io, strptr("index.md"), strlen("index.md"))
+  if !ovid/mem.Eq(a.p, a.n, strptr("/"), 1) {
+    return 1
+  }
+  var b *bytes.Span = URL(io, strptr("about.md"), strlen("about.md"))
+  if !ovid/mem.Eq(b.p, b.n, strptr("/about/"), strlen("/about/")) {
+    return 2
+  }
+  var c *bytes.Span = URL(io, strptr("blog/index.md"), strlen("blog/index.md"))
+  if !ovid/mem.Eq(c.p, c.n, strptr("/blog/"), strlen("/blog/")) {
+    return 3
+  }
+  var d *bytes.Span = URL(io, strptr("blog/hello.md"), strlen("blog/hello.md"))
+  if !ovid/mem.Eq(d.p, d.n, strptr("/blog/hello/"), strlen("/blog/hello/")) {
+    return 4
+  }
+  var e *bytes.Span = OutRel(io, strptr("/"), 1)
+  if !ovid/mem.Eq(e.p, e.n, strptr("index.html"), strlen("index.html")) {
+    return 5
+  }
+  var f *bytes.Span = OutRel(io, strptr("/blog/hello/"), strlen("/blog/hello/"))
+  if !ovid/mem.Eq(f.p, f.n, strptr("blog/hello/index.html"), strlen("blog/hello/index.html")) {
+    return 6
+  }
+  return 0
+}
+
+func TestFallback(io *ovid/io.Cap) i64 {
+  var s *bytes.Span = FallbackTitle(io, strptr("# Hello there\n"), strlen("# Hello there\n"), strptr("blog/x.md"), strlen("blog/x.md"))
+  if !ovid/mem.Eq(s.p, s.n, strptr("Hello there"), strlen("Hello there")) {
+    return 1
+  }
+  var t *bytes.Span = FallbackTitle(io, strptr("no heading\n"), strlen("no heading\n"), strptr("blog/hello.md"), strlen("blog/hello.md"))
+  if !ovid/mem.Eq(t.p, t.n, strptr("hello"), 5) {
+    return 2
+  }
+  var u *bytes.Span = FallbackTitle(io, strptr("x\n"), 2, strptr("index.md"), strlen("index.md"))
+  if !ovid/mem.Eq(u.p, u.n, strptr("Home"), 4) {
+    return 3
+  }
+  var v *bytes.Span = FallbackTitle(io, strptr("x\n"), 2, strptr("blog/index.md"), strlen("blog/index.md"))
+  if !ovid/mem.Eq(v.p, v.n, strptr("blog"), 4) {
+    return 4
+  }
+  return 0
+}
+
+func TestApply(io *ovid/io.Cap) i64 {
+  var page *Page = ovid/io.Alloc(io, sizeof(Page)) as *Page
+  page.title = strptr("A & B")
+  page.titlen = strlen("A & B")
+  page.body = strptr("<p>x</p>")
+  page.bodyn = strlen("<p>x</p>")
+  var tpl i64 = strptr("<h1>{{ title }}</h1>\n{{body}}\n{{missing}}\n")
+  var n i64 = strlen("<h1>{{ title }}</h1>\n{{body}}\n{{missing}}\n")
+  var b *ovid/mem.Buf = Apply(io, tpl, n, page)
+  var w i64 = strptr("<h1>A &amp; B</h1>\n<p>x</p>\n{{missing}}\n")
+  if !Same(io, b.data, b.len, w, strlen("<h1>A &amp; B</h1>\n<p>x</p>\n{{missing}}\n")) {
+    return 1
+  }
+  return 0
+}

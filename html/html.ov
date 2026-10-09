@@ -1,0 +1,636 @@
+package html
+
+import bytes
+import ovid/io
+import ovid/mem
+
+// Line is one line of a file, without its newline. next is the offset of
+// the following line. ok is false when off is past the end.
+type Line struct {
+  p i64
+  n i64
+  next i64
+  ok bool
+}
+
+// Doc is a markdown file after front matter is split off. title and date
+// are empty when the file has no front matter or no such key. The slices
+// point into the source buffer.
+type Doc struct {
+  title i64
+  titlen i64
+  date i64
+  daten i64
+  body i64
+  bodyn i64
+}
+
+// Conf is the title from config.txt. ok is false when the title is missing
+// or empty.
+type Conf struct {
+  title i64
+  titlen i64
+  ok bool
+}
+
+// Page is one content file plus the slots a template can see. body and nav
+// are HTML and are inserted raw. The other slots are escaped.
+type Page struct {
+  title i64
+  titlen i64
+  date i64
+  daten i64
+  body i64
+  bodyn i64
+  href i64
+  hrefn i64
+  root i64
+  rootn i64
+  site i64
+  siten i64
+  nav i64
+  navn i64
+  rel i64
+  reln i64
+  next *Page
+}
+
+type Slot struct {
+  p i64
+  n i64
+  raw bool
+  ok bool
+}
+
+type Link struct {
+  ok bool
+  tp i64
+  tn i64
+  up i64
+  un i64
+  next i64
+}
+
+func LineAt(io *ovid/io.Cap, base i64, n i64, off i64) *Line {
+  var ln *Line = ovid/io.Alloc(io, sizeof(Line)) as *Line
+  if off >= n {
+    return ln
+  }
+  var i i64 = off
+  while i < n && load8(base + i) != 10 {
+    i = i + 1
+  }
+  var end i64 = i
+  if end > off && load8((base + end) - 1) == 13 {
+    end = end - 1
+  }
+  ln.p = base + off
+  ln.n = end - off
+  ln.ok = true
+  if i < n {
+    ln.next = i + 1
+  } else {
+    ln.next = n
+  }
+  return ln
+}
+
+// Split takes a leading "---" front matter block. Keys are title and date.
+// Anything else in the block is ignored. A block that never closes is not
+// front matter: the whole file stays the body, so a markdown rule at the
+// top of a file is not eaten.
+func Split(io *ovid/io.Cap, p i64, n i64) *Doc {
+  var d *Doc = ovid/io.Alloc(io, sizeof(Doc)) as *Doc
+  d.body = p
+  d.bodyn = n
+  var first *Line = LineAt(io, p, n, 0)
+  if !first.ok || !ovid/mem.Eq(first.p, first.n, strptr("---"), 3) {
+    return d
+  }
+  var off i64 = first.next
+  var closed bool = false
+  var titlep i64 = 0
+  var titlen i64 = 0
+  var datep i64 = 0
+  var daten i64 = 0
+  while off < n && !closed {
+    var ln *Line = LineAt(io, p, n, off)
+    if !ln.ok {
+      off = n
+    } else {
+      off = ln.next
+      if ovid/mem.Eq(ln.p, ln.n, strptr("---"), 3) {
+        closed = true
+        d.body = p + off
+        d.bodyn = n - off
+      } else {
+        var cut *bytes.Cut = bytes.CutByte(io, ln.p, ln.n, 58)
+        if cut.ok {
+          var key *bytes.Span = bytes.Trim(io, cut.ap, cut.an)
+          var val *bytes.Span = bytes.Trim(io, cut.bp, cut.bn)
+          if ovid/mem.Eq(key.p, key.n, strptr("title"), 5) {
+            titlep = val.p
+            titlen = val.n
+          } else if ovid/mem.Eq(key.p, key.n, strptr("date"), 4) {
+            datep = val.p
+            daten = val.n
+          }
+        }
+      }
+    }
+  }
+  if closed {
+    d.title = titlep
+    d.titlen = titlen
+    d.date = datep
+    d.daten = daten
+  } else {
+    d.body = p
+    d.bodyn = n
+  }
+  return d
+}
+
+// ParseConfig reads "title: ..." lines. Blank lines and # comments are
+// skipped. The value is trimmed and may contain colons.
+func ParseConfig(io *ovid/io.Cap, p i64, n i64) *Conf {
+  var c *Conf = ovid/io.Alloc(io, sizeof(Conf)) as *Conf
+  var off i64 = 0
+  while off < n {
+    var ln *Line = LineAt(io, p, n, off)
+    if !ln.ok {
+      off = n
+    } else {
+      off = ln.next
+      var s *bytes.Span = bytes.Trim(io, ln.p, ln.n)
+      var skip bool = s.n == 0 || load8(s.p) == 35
+      if !skip {
+        var cut *bytes.Cut = bytes.CutByte(io, s.p, s.n, 58)
+        if cut.ok {
+          var key *bytes.Span = bytes.Trim(io, cut.ap, cut.an)
+          var val *bytes.Span = bytes.Trim(io, cut.bp, cut.bn)
+          if ovid/mem.Eq(key.p, key.n, strptr("title"), 5) && val.n > 0 {
+            c.title = val.p
+            c.titlen = val.n
+            c.ok = true
+          }
+        }
+      }
+    }
+  }
+  return c
+}
+
+func Stem(io *ovid/io.Cap, rel i64, reln i64) *bytes.Span {
+  if bytes.HasSuffix(rel, reln, strptr(".md"), 3) {
+    return bytes.New(io, rel, reln - 3)
+  }
+  return bytes.New(io, rel, reln)
+}
+
+func Slash(io *ovid/io.Cap, p i64, n i64) *bytes.Span {
+  var d i64 = ovid/io.Alloc(io, n + 3)
+  store8(d, 47)
+  if n > 0 {
+    ovid/mem.Copy(d + 1, p, n)
+  }
+  store8((d + 1) + n, 47)
+  store8((d + 2) + n, 0)
+  return bytes.New(io, d, n + 2)
+}
+
+// URL is the absolute path of a content file. index.md is "/", a section
+// index blog/index.md is "/blog/", and blog/hello.md is "/blog/hello/".
+func URL(io *ovid/io.Cap, rel i64, reln i64) *bytes.Span {
+  var stem *bytes.Span = Stem(io, rel, reln)
+  if ovid/mem.Eq(stem.p, stem.n, strptr("index"), 5) {
+    return bytes.New(io, strptr("/"), 1)
+  }
+  if bytes.HasSuffix(stem.p, stem.n, strptr("/index"), 6) {
+    return Slash(io, stem.p, stem.n - 6)
+  }
+  return Slash(io, stem.p, stem.n)
+}
+
+// OutRel is the file under public/ for a URL from URL.
+func OutRel(io *ovid/io.Cap, href i64, hrefn i64) *bytes.Span {
+  var a i64 = 0
+  var z i64 = hrefn
+  if z > a && load8(href + a) == 47 {
+    a = a + 1
+  }
+  if z > a && load8((href + z) - 1) == 47 {
+    z = z - 1
+  }
+  var midn i64 = z - a
+  if midn == 0 {
+    return bytes.New(io, strptr("index.html"), strlen("index.html"))
+  }
+  return bytes.Join(io, href + a, midn, strptr("index.html"), strlen("index.html"))
+}
+
+// Heading is 1, 2, or 3 when the line is "# ", "## ", or "### ", else 0.
+// The heading text starts at p + level + 1.
+func Heading(p i64, n i64) i64 {
+  var i i64 = 0
+  while i < n && i < 3 && load8(p + i) == 35 {
+    i = i + 1
+  }
+  if i == 0 || i >= n || load8(p + i) != 32 {
+    return 0
+  }
+  return i
+}
+
+func NameFromRel(io *ovid/io.Cap, rel i64, reln i64) *bytes.Span {
+  var stem *bytes.Span = Stem(io, rel, reln)
+  if ovid/mem.Eq(stem.p, stem.n, strptr("index"), 5) {
+    return bytes.New(io, strptr("Home"), strlen("Home"))
+  }
+  var p i64 = stem.p
+  var n i64 = stem.n
+  if bytes.HasSuffix(p, n, strptr("/index"), 6) {
+    n = n - 6
+  }
+  var i i64 = n - 1
+  var cut i64 = 0
+  while i >= 0 {
+    if load8(p + i) == 47 {
+      cut = i + 1
+      i = -1
+    } else {
+      i = i - 1
+    }
+  }
+  return bytes.New(io, p + cut, n - cut)
+}
+
+// FallbackTitle is the first heading in the body, or else a name taken
+// from the file path. The site index with no heading is "Home".
+func FallbackTitle(io *ovid/io.Cap, body i64, bodyn i64, rel i64, reln i64) *bytes.Span {
+  var off i64 = 0
+  while off < bodyn {
+    var ln *Line = LineAt(io, body, bodyn, off)
+    if !ln.ok {
+      off = bodyn
+    } else {
+      off = ln.next
+      var lv i64 = Heading(ln.p, ln.n)
+      if lv > 0 {
+        var raw *bytes.Span = bytes.Trim(io, (ln.p + lv) + 1, ln.n - (lv + 1))
+        if raw.n > 0 {
+          return raw
+        }
+      }
+    }
+  }
+  return NameFromRel(io, rel, reln)
+}
+
+// Before orders pages newest date first. A missing date sorts last. Equal
+// dates sort by href, so the order does not depend on directory walk order.
+func Before(a *Page, b *Page) bool {
+  if a.daten == 0 && b.daten != 0 {
+    return false
+  }
+  if a.daten != 0 && b.daten == 0 {
+    return true
+  }
+  if a.daten != 0 && b.daten != 0 {
+    var c i64 = bytes.Cmp(a.date, a.daten, b.date, b.daten)
+    if c != 0 {
+      return c > 0
+    }
+  }
+  return bytes.Cmp(a.href, a.hrefn, b.href, b.hrefn) < 0
+}
+
+func EscapeByte(io *ovid/io.Cap, b *ovid/mem.Buf, c i64) i64 {
+  if c == 38 {
+    ovid/mem.WBytes(io, b, strptr("&amp;"), strlen("&amp;"))
+  } else if c == 60 {
+    ovid/mem.WBytes(io, b, strptr("&lt;"), strlen("&lt;"))
+  } else if c == 62 {
+    ovid/mem.WBytes(io, b, strptr("&gt;"), strlen("&gt;"))
+  } else if c == 34 {
+    ovid/mem.WBytes(io, b, strptr("&quot;"), strlen("&quot;"))
+  } else {
+    ovid/mem.WByte(io, b, c)
+  }
+  return 0
+}
+
+func Escape(io *ovid/io.Cap, b *ovid/mem.Buf, p i64, n i64) i64 {
+  var i i64 = 0
+  while i < n {
+    EscapeByte(io, b, load8(p + i))
+    i = i + 1
+  }
+  return 0
+}
+
+func FindStar(p i64, n i64, i i64) i64 {
+  while (i + 1) < n {
+    if load8(p + i) == 42 && load8(p + i + 1) == 42 {
+      return i
+    }
+    i = i + 1
+  }
+  return -1
+}
+
+func ParseLink(io *ovid/io.Cap, p i64, n i64, i i64) *Link {
+  var k *Link = ovid/io.Alloc(io, sizeof(Link)) as *Link
+  var restp i64 = p + i
+  var restn i64 = n - i
+  var rb i64 = bytes.IndexByte(restp, restn, 93)
+  if rb < 1 || (rb + 1) >= restn || load8(restp + rb + 1) != 40 {
+    return k
+  }
+  var after i64 = rb + 2
+  var rp i64 = bytes.IndexByte(restp + after, restn - after, 41)
+  if rp < 0 {
+    return k
+  }
+  k.ok = true
+  k.tp = restp + 1
+  k.tn = rb - 1
+  k.up = restp + after
+  k.un = rp
+  k.next = (i + after) + (rp + 1)
+  return k
+}
+
+func EmitLink(io *ovid/io.Cap, b *ovid/mem.Buf, k *Link) i64 {
+  ovid/mem.WBytes(io, b, strptr("<a href=\""), strlen("<a href=\""))
+  Escape(io, b, k.up, k.un)
+  ovid/mem.WBytes(io, b, strptr("\">"), 2)
+  Escape(io, b, k.tp, k.tn)
+  ovid/mem.WBytes(io, b, strptr("</a>"), strlen("</a>"))
+  return 0
+}
+
+// Inline writes one line. Strong, code, and links do not nest: the inside
+// of each is escaped text. An unclosed marker is copied as text.
+func Inline(io *ovid/io.Cap, b *ovid/mem.Buf, p i64, n i64) i64 {
+  var i i64 = 0
+  while i < n {
+    var c i64 = load8(p + i)
+    if c == 42 && (i + 1) < n && load8(p + i + 1) == 42 {
+      var j i64 = FindStar(p, n, i + 2)
+      if j >= 0 {
+        ovid/mem.WBytes(io, b, strptr("<strong>"), strlen("<strong>"))
+        Escape(io, b, (p + i) + 2, j - (i + 2))
+        ovid/mem.WBytes(io, b, strptr("</strong>"), strlen("</strong>"))
+        i = j + 2
+      } else {
+        ovid/mem.WBytes(io, b, strptr("**"), 2)
+        i = i + 2
+      }
+    } else if c == 96 {
+      var j i64 = bytes.IndexByte((p + i) + 1, n - (i + 1), 96)
+      if j >= 0 {
+        ovid/mem.WBytes(io, b, strptr("<code>"), strlen("<code>"))
+        Escape(io, b, (p + i) + 1, j)
+        ovid/mem.WBytes(io, b, strptr("</code>"), strlen("</code>"))
+        i = (i + 1) + (j + 1)
+      } else {
+        EscapeByte(io, b, c)
+        i = i + 1
+      }
+    } else if c == 91 {
+      var k *Link = ParseLink(io, p, n, i)
+      if k.ok {
+        EmitLink(io, b, k)
+        i = k.next
+      } else {
+        EscapeByte(io, b, c)
+        i = i + 1
+      }
+    } else {
+      EscapeByte(io, b, c)
+      i = i + 1
+    }
+  }
+  return 0
+}
+
+func Close(io *ovid/io.Cap, b *ovid/mem.Buf, mode i64) i64 {
+  if mode == 1 {
+    ovid/mem.WBytes(io, b, strptr("</p>\n"), strlen("</p>\n"))
+  } else if mode == 2 {
+    ovid/mem.WBytes(io, b, strptr("</ul>\n"), strlen("</ul>\n"))
+  } else if mode == 3 {
+    ovid/mem.WBytes(io, b, strptr("</code></pre>\n"), strlen("</code></pre>\n"))
+  }
+  return 0
+}
+
+func EmitH(io *ovid/io.Cap, b *ovid/mem.Buf, lv i64, p i64, n i64) i64 {
+  ovid/mem.WBytes(io, b, strptr("<h"), 2)
+  ovid/mem.WByte(io, b, 48 + lv)
+  ovid/mem.WByte(io, b, 62)
+  Inline(io, b, p, n)
+  ovid/mem.WBytes(io, b, strptr("</h"), 3)
+  ovid/mem.WByte(io, b, 48 + lv)
+  ovid/mem.WBytes(io, b, strptr(">\n"), 2)
+  return 0
+}
+
+func IsList(p i64, n i64) bool {
+  return n >= 2 && load8(p) == 45 && load8(p + 1) == 32
+}
+
+func IsHr(io *ovid/io.Cap, p i64, n i64) bool {
+  var s *bytes.Span = bytes.Trim(io, p, n)
+  return ovid/mem.Eq(s.p, s.n, strptr("---"), 3)
+}
+
+// One consumes a line. mode is 0 none, 1 paragraph, 2 list, 3 code fence.
+// It returns the mode after the line. There is no break, so each branch
+// returns instead of falling through.
+func One(io *ovid/io.Cap, b *ovid/mem.Buf, mode i64, ln *Line) i64 {
+  if mode == 3 {
+    if bytes.HasPrefix(ln.p, ln.n, strptr("```"), 3) {
+      Close(io, b, 3)
+      return 0
+    }
+    Escape(io, b, ln.p, ln.n)
+    ovid/mem.WByte(io, b, 10)
+    return 3
+  }
+  if bytes.HasPrefix(ln.p, ln.n, strptr("```"), 3) {
+    if mode != 0 {
+      Close(io, b, mode)
+    }
+    ovid/mem.WBytes(io, b, strptr("<pre><code>"), strlen("<pre><code>"))
+    return 3
+  }
+  if ln.n == 0 {
+    if mode != 0 {
+      Close(io, b, mode)
+    }
+    return 0
+  }
+  var lv i64 = Heading(ln.p, ln.n)
+  if lv > 0 {
+    if mode != 0 {
+      Close(io, b, mode)
+    }
+    EmitH(io, b, lv, (ln.p + lv) + 1, ln.n - (lv + 1))
+    return 0
+  }
+  if IsList(ln.p, ln.n) {
+    var m i64 = mode
+    if m == 1 {
+      Close(io, b, 1)
+      m = 0
+    }
+    if m != 2 {
+      ovid/mem.WBytes(io, b, strptr("<ul>\n"), strlen("<ul>\n"))
+      m = 2
+    }
+    ovid/mem.WBytes(io, b, strptr("<li>"), strlen("<li>"))
+    Inline(io, b, ln.p + 2, ln.n - 2)
+    ovid/mem.WBytes(io, b, strptr("</li>\n"), strlen("</li>\n"))
+    return m
+  }
+  if IsHr(io, ln.p, ln.n) {
+    if mode != 0 {
+      Close(io, b, mode)
+    }
+    ovid/mem.WBytes(io, b, strptr("<hr>\n"), strlen("<hr>\n"))
+    return 0
+  }
+  var m i64 = mode
+  if m != 1 {
+    if m != 0 {
+      Close(io, b, m)
+    }
+    ovid/mem.WBytes(io, b, strptr("<p>"), 3)
+    m = 1
+  } else {
+    ovid/mem.WByte(io, b, 10)
+  }
+  Inline(io, b, ln.p, ln.n)
+  return m
+}
+
+// Markdown renders a small subset: paragraphs, h1-h3, "- " lists, --- rules,
+// and ``` fences. Inline: **strong**, `code`, and [text](url).
+func Markdown(io *ovid/io.Cap, p i64, n i64) *ovid/mem.Buf {
+  var b *ovid/mem.Buf = ovid/mem.New(io, n + 64)
+  var off i64 = 0
+  var mode i64 = 0
+  while off < n {
+    var ln *Line = LineAt(io, p, n, off)
+    if !ln.ok {
+      off = n
+    } else {
+      off = ln.next
+      mode = One(io, b, mode, ln)
+    }
+  }
+  if mode != 0 {
+    Close(io, b, mode)
+  }
+  return b
+}
+
+func FindBrace(p i64, n i64, i i64) i64 {
+  while (i + 1) < n {
+    if load8(p + i) == 125 && load8(p + i + 1) == 125 {
+      return i
+    }
+    i = i + 1
+  }
+  return -1
+}
+
+func Lookup(io *ovid/io.Cap, page *Page, name i64, namen i64) *Slot {
+  var s *Slot = ovid/io.Alloc(io, sizeof(Slot)) as *Slot
+  if ovid/mem.Eq(name, namen, strptr("title"), 5) {
+    s.ok = true
+    s.p = page.title
+    s.n = page.titlen
+  } else if ovid/mem.Eq(name, namen, strptr("date"), 4) {
+    s.ok = true
+    s.p = page.date
+    s.n = page.daten
+  } else if ovid/mem.Eq(name, namen, strptr("href"), 4) {
+    s.ok = true
+    s.p = page.href
+    s.n = page.hrefn
+  } else if ovid/mem.Eq(name, namen, strptr("root"), 4) {
+    s.ok = true
+    s.p = page.root
+    s.n = page.rootn
+  } else if ovid/mem.Eq(name, namen, strptr("site_title"), 10) {
+    s.ok = true
+    s.p = page.site
+    s.n = page.siten
+  } else if ovid/mem.Eq(name, namen, strptr("body"), 4) {
+    s.ok = true
+    s.raw = true
+    s.p = page.body
+    s.n = page.bodyn
+  } else if ovid/mem.Eq(name, namen, strptr("pages"), 5) {
+    s.ok = true
+    s.raw = true
+    s.p = page.nav
+    s.n = page.navn
+  }
+  return s
+}
+
+// Apply replaces {{name}} slots. Spaces inside the braces are ignored.
+// body and pages are inserted as HTML. Every other known slot is escaped.
+// An unknown name is left as written, so a typo stays visible.
+func Apply(io *ovid/io.Cap, tpl i64, tpln i64, page *Page) *ovid/mem.Buf {
+  var b *ovid/mem.Buf = ovid/mem.New(io, (tpln + page.bodyn) + 128)
+  var i i64 = 0
+  while i < tpln {
+    var open bool = load8(tpl + i) == 123 && (i + 1) < tpln && load8(tpl + i + 1) == 123
+    if open {
+      var j i64 = FindBrace(tpl, tpln, i + 2)
+      if j < 0 {
+        ovid/mem.WBytes(io, b, tpl + i, tpln - i)
+        i = tpln
+      } else {
+        var name *bytes.Span = bytes.Trim(io, (tpl + i) + 2, j - (i + 2))
+        var slot *Slot = Lookup(io, page, name.p, name.n)
+        if slot.ok {
+          if slot.raw {
+            ovid/mem.WBytes(io, b, slot.p, slot.n)
+          } else {
+            Escape(io, b, slot.p, slot.n)
+          }
+        } else {
+          ovid/mem.WBytes(io, b, tpl + i, (j + 2) - i)
+        }
+        i = j + 2
+      }
+    } else {
+      ovid/mem.WByte(io, b, load8(tpl + i))
+      i = i + 1
+    }
+  }
+  return b
+}
+
+// Nav is a <ul> of every page, in the order given. Build sorts first.
+func Nav(io *ovid/io.Cap, pages *Page) *ovid/mem.Buf {
+  var b *ovid/mem.Buf = ovid/mem.New(io, 256)
+  ovid/mem.WBytes(io, b, strptr("<ul>\n"), strlen("<ul>\n"))
+  var p *Page = pages
+  while p != 0 as *Page {
+    ovid/mem.WBytes(io, b, strptr("<li><a href=\""), strlen("<li><a href=\""))
+    Escape(io, b, p.href, p.hrefn)
+    ovid/mem.WBytes(io, b, strptr("\">"), 2)
+    Escape(io, b, p.title, p.titlen)
+    ovid/mem.WBytes(io, b, strptr("</a></li>\n"), strlen("</a></li>\n"))
+    p = p.next
+  }
+  ovid/mem.WBytes(io, b, strptr("</ul>\n"), strlen("</ul>\n"))
+  return b
+}
