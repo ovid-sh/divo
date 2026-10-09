@@ -1,0 +1,2 @@
+module divo
+entry divo
