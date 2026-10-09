@@ -1,0 +1,74 @@
+package bytes
+
+import ovid/io
+import ovid/mem
+
+func TestCmp(io *ovid/io.Cap) i64 {
+  if Cmp(strptr("a"), 1, strptr("a"), 1) != 0 {
+    return 1
+  }
+  if Cmp(strptr("a"), 1, strptr("b"), 1) != -1 {
+    return 2
+  }
+  if Cmp(strptr("ab"), 2, strptr("a"), 1) != 1 {
+    return 3
+  }
+  return 0
+}
+
+func TestTrim(io *ovid/io.Cap) i64 {
+  var s *Span = Trim(io, strptr(" \thi \n"), strlen(" \thi \n"))
+  if !ovid/mem.Eq(s.p, s.n, strptr("hi"), 2) {
+    return 1
+  }
+  var e *Span = Trim(io, strptr("   "), 3)
+  if e.n != 0 {
+    return 2
+  }
+  return 0
+}
+
+func TestCut(io *ovid/io.Cap) i64 {
+  var k *Cut = CutByte(io, strptr("title: A: B"), strlen("title: A: B"), 58)
+  if !k.ok || !ovid/mem.Eq(k.ap, k.an, strptr("title"), 5) {
+    return 1
+  }
+  if !ovid/mem.Eq(k.bp, k.bn, strptr(" A: B"), strlen(" A: B")) {
+    return 2
+  }
+  var m *Cut = CutByte(io, strptr("none"), 4, 58)
+  if m.ok || m.an != 4 {
+    return 3
+  }
+  return 0
+}
+
+func TestJoin(io *ovid/io.Cap) i64 {
+  var s *Span = Join(io, strptr("."), 1, strptr("public"), strlen("public"))
+  if !ovid/mem.Eq(s.p, s.n, strptr("public"), strlen("public")) {
+    return 1
+  }
+  var t *Span = Join(io, strptr("content"), strlen("content"), strptr("a.md"), 4)
+  if !ovid/mem.Eq(t.p, t.n, strptr("content/a.md"), strlen("content/a.md")) {
+    return 2
+  }
+  if load8(t.p + t.n) != 0 {
+    return 3
+  }
+  return 0
+}
+
+func TestIndex(io *ovid/io.Cap) i64 {
+  var p i64 = strptr("abc abc")
+  var n i64 = strlen("abc abc")
+  if Index(p, n, strptr("bc"), 2) != 1 {
+    return 1
+  }
+  if Index(p, n, strptr("zz"), 2) != -1 {
+    return 2
+  }
+  if !HasSuffix(p, n, strptr("abc"), 3) || !HasPrefix(p, n, strptr("ab"), 2) {
+    return 3
+  }
+  return 0
+}

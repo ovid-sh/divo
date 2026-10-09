@@ -1,0 +1,156 @@
+package bytes
+
+import ovid/io
+import ovid/mem
+
+// Span is n bytes at p. p is NUL-terminated when a func here allocated it,
+// so it can be handed to ovid/io as a path; n does not count the NUL.
+type Span struct {
+  p i64
+  n i64
+}
+
+// Cut is a byte string split on the first c. ok is false when c is absent,
+// and then the left side is the whole input.
+type Cut struct {
+  ok bool
+  ap i64
+  an i64
+  bp i64
+  bn i64
+}
+
+func New(io *ovid/io.Cap, p i64, n i64) *Span {
+  var s *Span = ovid/io.Alloc(io, sizeof(Span)) as *Span
+  s.p = p
+  s.n = n
+  return s
+}
+
+// Nul copies n bytes and appends a NUL.
+func Nul(io *ovid/io.Cap, p i64, n i64) *Span {
+  var d i64 = ovid/io.Alloc(io, n + 1)
+  if n > 0 {
+    ovid/mem.Copy(d, p, n)
+  }
+  store8(d + n, 0)
+  return New(io, d, n)
+}
+
+// Join joins two path pieces with "/". An empty piece is dropped. A piece
+// that is exactly "." is dropped, so joining the default site dir "." with
+// "public" yields "public" and not "./public".
+func Join(io *ovid/io.Cap, a i64, an i64, b i64, bn i64) *Span {
+  var adrop bool = an == 0 || (an == 1 && load8(a) == 46)
+  if adrop {
+    return Nul(io, b, bn)
+  }
+  if bn == 0 {
+    return Nul(io, a, an)
+  }
+  var n i64 = (an + 1) + bn
+  var p i64 = ovid/io.Alloc(io, n + 1)
+  ovid/mem.Copy(p, a, an)
+  store8(p + an, 47)
+  ovid/mem.Copy((p + an) + 1, b, bn)
+  store8(p + n, 0)
+  return New(io, p, n)
+}
+
+// Cmp compares bytes the way Go compares strings: -1, 0, or 1.
+func Cmp(a i64, an i64, b i64, bn i64) i64 {
+  var i i64 = 0
+  while i < an && i < bn {
+    var x i64 = load8(a + i)
+    var y i64 = load8(b + i)
+    if x < y {
+      return -1
+    }
+    if x > y {
+      return 1
+    }
+    i = i + 1
+  }
+  if an < bn {
+    return -1
+  }
+  if an > bn {
+    return 1
+  }
+  return 0
+}
+
+func HasPrefix(p i64, n i64, lit i64, ln i64) bool {
+  if n < ln {
+    return false
+  }
+  return ovid/mem.Eq(p, ln, lit, ln)
+}
+
+func HasSuffix(p i64, n i64, lit i64, ln i64) bool {
+  if n < ln {
+    return false
+  }
+  return ovid/mem.Eq((p + n) - ln, ln, lit, ln)
+}
+
+// IndexByte returns the first index of c, or -1.
+func IndexByte(p i64, n i64, c i64) i64 {
+  var i i64 = 0
+  while i < n {
+    if load8(p + i) == c {
+      return i
+    }
+    i = i + 1
+  }
+  return -1
+}
+
+// Index returns the first index of lit, or -1. An empty lit matches at 0.
+func Index(p i64, n i64, lit i64, ln i64) i64 {
+  if ln == 0 {
+    return 0
+  }
+  var i i64 = 0
+  while (i + ln) <= n {
+    if ovid/mem.Eq(p + i, ln, lit, ln) {
+      return i
+    }
+    i = i + 1
+  }
+  return -1
+}
+
+func IsSpace(c i64) bool {
+  return c == 32 || c == 9 || c == 10 || c == 13
+}
+
+// Trim drops leading and trailing spaces, tabs, and newlines. The result
+// points into the input.
+func Trim(io *ovid/io.Cap, p i64, n i64) *Span {
+  var a i64 = 0
+  while a < n && IsSpace(load8(p + a)) {
+    a = a + 1
+  }
+  var b i64 = n
+  while b > a && IsSpace(load8((p + b) - 1)) {
+    b = b - 1
+  }
+  return New(io, p + a, b - a)
+}
+
+func CutByte(io *ovid/io.Cap, p i64, n i64, c i64) *Cut {
+  var k *Cut = ovid/io.Alloc(io, sizeof(Cut)) as *Cut
+  var i i64 = IndexByte(p, n, c)
+  if i < 0 {
+    k.ap = p
+    k.an = n
+    return k
+  }
+  k.ok = true
+  k.ap = p
+  k.an = i
+  k.bp = (p + i) + 1
+  k.bn = n - (i + 1)
+  return k
+}
