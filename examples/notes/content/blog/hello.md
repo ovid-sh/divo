@@ -7,9 +7,9 @@ date: 2026-10-09
 
 First post. Inline markup is **bold**, `code`, and a [link](/about/).
 
-A fence keeps the characters as they are:
+An `ov` fence is highlighted:
 
-```
+```ov
 if x < y {
   return 1
 }

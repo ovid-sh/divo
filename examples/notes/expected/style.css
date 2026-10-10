@@ -43,3 +43,8 @@ nav {
   padding-top: 1rem;
   border-top: 1px solid #ddd6c8;
 }
+
+.tok-kw { color: #6b3fa0; font-weight: 600; }
+.tok-str { color: #0b6b4f; }
+.tok-com { color: #6e675c; }
+.tok-num { color: #9a3412; }

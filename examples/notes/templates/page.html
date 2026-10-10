@@ -13,7 +13,10 @@
 {{body}}
 </main>
 <nav>
-{{pages}}
+<ul>
+{% for page in pages %}<li><a href="{{ page.href }}">{{ page.title }}</a></li>
+{% endfor %}</ul>
+
 </nav>
 </body>
 </html>
