@@ -53,20 +53,6 @@ func SiteLen(site i64, siten i64) i64 {
   return siten
 }
 
-func Insert(head *html.Page, p *html.Page) *html.Page {
-  if head == 0 as *html.Page || html.Before(p, head) {
-    p.next = head
-    return p
-  }
-  var c *html.Page = head
-  while c.next != 0 as *html.Page && !html.Before(p, c.next) {
-    c = c.next
-  }
-  p.next = c.next
-  c.next = p
-  return head
-}
-
 func Build(io *ovid/io.Cap, site i64, siten i64) i64 {
   siten = SiteLen(site, siten)
   var dir bool, de i64 = ovid/io.IsDir(io, site, siten)
@@ -103,6 +89,7 @@ func Build(io *ovid/io.Cap, site i64, siten i64) i64 {
     return FailPath(io, strptr("cannot read "), ep, en, list.err)
   }
   var head *html.Page = 0 as *html.Page
+  var tail *html.Page = 0 as *html.Page
   var f *fs.File = list.head
   var count i64 = 0
   while f != 0 as *fs.File {
@@ -135,10 +122,17 @@ func Build(io *ovid/io.Cap, site i64, siten i64) i64 {
     var rendered *ovid/mem.Buf = html.Markdown(io, doc.body, doc.bodyn)
     page.body = rendered.data
     page.bodyn = rendered.len
-    head = Insert(head, page)
+    page.next = 0 as *html.Page
+    if tail == 0 as *html.Page {
+      head = page
+    } else {
+      tail.next = page
+    }
+    tail = page
     count = count + 1
     f = f.next
   }
+  head = html.Sort(io, head, count)
   var nav *ovid/mem.Buf = html.Nav(io, head)
   var p *html.Page = head
   while p != 0 as *html.Page {

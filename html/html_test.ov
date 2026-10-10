@@ -198,6 +198,91 @@ func TestFence(io *ovid/io.Cap) i64 {
   return 0
 }
 
+func TestSort(io *ovid/io.Cap) i64 {
+  if Sort(io, 0 as *Page, 0) != 0 as *Page {
+    return 1
+  }
+  var solo *Page = ovid/io.Alloc(io, sizeof(Page)) as *Page
+  solo.href = strptr("/only/")
+  solo.hrefn = strlen("/only/")
+  solo.date = strptr("2020-01-01")
+  solo.daten = 10
+  if Sort(io, solo, 1) != solo || solo.next != 0 as *Page {
+    return 2
+  }
+  var a *Page = ovid/io.Alloc(io, sizeof(Page)) as *Page
+  a.date = strptr("2020-06-01")
+  a.daten = 10
+  a.href = strptr("/a/")
+  a.hrefn = 3
+  var c *Page = ovid/io.Alloc(io, sizeof(Page)) as *Page
+  c.date = strptr("2020-06-01")
+  c.daten = 10
+  c.href = strptr("/c/")
+  c.hrefn = 3
+  var old *Page = ovid/io.Alloc(io, sizeof(Page)) as *Page
+  old.date = strptr("2020-01-01")
+  old.daten = 10
+  old.href = strptr("/old/")
+  old.hrefn = strlen("/old/")
+  var none *Page = ovid/io.Alloc(io, sizeof(Page)) as *Page
+  none.href = strptr("/none/")
+  none.hrefn = strlen("/none/")
+  none.next = old
+  old.next = c
+  c.next = a
+  var h *Page = Sort(io, none, 4)
+  if h == 0 as *Page || !ovid/mem.Eq(h.href, h.hrefn, strptr("/a/"), 3) {
+    return 3
+  }
+  h = h.next
+  if h == 0 as *Page || !ovid/mem.Eq(h.href, h.hrefn, strptr("/c/"), 3) {
+    return 4
+  }
+  h = h.next
+  if h == 0 as *Page || !ovid/mem.Eq(h.href, h.hrefn, strptr("/old/"), strlen("/old/")) {
+    return 5
+  }
+  h = h.next
+  if h == 0 as *Page || !ovid/mem.Eq(h.href, h.hrefn, strptr("/none/"), strlen("/none/")) {
+    return 6
+  }
+  if h.next != 0 as *Page {
+    return 7
+  }
+  var n i64 = 32
+  var hrefs i64 = ovid/io.Alloc(io, n)
+  var i i64 = 0
+  while i < n {
+    store8(hrefs + i, 97 + i)
+    i = i + 1
+  }
+  var head *Page = 0 as *Page
+  i = 0
+  while i < n {
+    var p *Page = ovid/io.Alloc(io, sizeof(Page)) as *Page
+    p.href = hrefs + i
+    p.hrefn = 1
+    p.next = head
+    head = p
+    i = i + 1
+  }
+  head = Sort(io, head, n)
+  i = 0
+  var cur *Page = head
+  while i < n {
+    if cur == 0 as *Page || cur.hrefn != 1 || load8(cur.href) != (97 + i) {
+      return 10 + i
+    }
+    cur = cur.next
+    i = i + 1
+  }
+  if cur != 0 as *Page {
+    return 50
+  }
+  return 0
+}
+
 func TestTera(io *ovid/io.Cap) i64 {
   var a *Page = ovid/io.Alloc(io, sizeof(Page)) as *Page
   a.title = strptr("A")
