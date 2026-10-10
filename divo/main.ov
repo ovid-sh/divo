@@ -144,6 +144,7 @@ func Build(io *ovid/io.Cap, site i64, siten i64) i64 {
   while p != 0 as *html.Page {
     p.nav = nav.data
     p.navn = nav.len
+    p.list = head
     p = p.next
   }
   var public *bytes.Span = bytes.Join(io, site, siten, strptr("public"), strlen("public"))

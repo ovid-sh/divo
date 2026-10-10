@@ -175,3 +175,60 @@ func TestApply(io *ovid/io.Cap) i64 {
   }
   return 0
 }
+
+func TestMarkdownMore(io *ovid/io.Cap) i64 {
+  var s i64 = strptr("#### Title\n\n*em* and __bold__ and foo_bar_ and a * b\n\n* * *\n\n> a *b*\n> c\n\n* one\n* two\n\n1. alpha\n2. beta\n")
+  var sn i64 = strlen("#### Title\n\n*em* and __bold__ and foo_bar_ and a * b\n\n* * *\n\n> a *b*\n> c\n\n* one\n* two\n\n1. alpha\n2. beta\n")
+  var w i64 = strptr("<h4>Title</h4>\n<p><em>em</em> and <strong>bold</strong> and foo_bar_ and a * b</p>\n<hr>\n<blockquote>\n<p>a <em>b</em>\nc</p>\n</blockquote>\n<ul>\n<li>one</li>\n<li>two</li>\n</ul>\n<ol>\n<li>alpha</li>\n<li>beta</li>\n</ol>\n")
+  var wn i64 = strlen("<h4>Title</h4>\n<p><em>em</em> and <strong>bold</strong> and foo_bar_ and a * b</p>\n<hr>\n<blockquote>\n<p>a <em>b</em>\nc</p>\n</blockquote>\n<ul>\n<li>one</li>\n<li>two</li>\n</ul>\n<ol>\n<li>alpha</li>\n<li>beta</li>\n</ol>\n")
+  if !Md(io, s, sn, w, wn) {
+    return 1
+  }
+  return 0
+}
+
+func TestFence(io *ovid/io.Cap) i64 {
+  var s i64 = strptr("```ruby\nx < y\n```\n\n```ov\nfunc f() {\n```\n")
+  var sn i64 = strlen("```ruby\nx < y\n```\n\n```ov\nfunc f() {\n```\n")
+  var w i64 = strptr("<pre><code class=\"language-ruby\">x &lt; y\n</code></pre>\n<pre><code class=\"language-ov\"><span class=\"tok-kw\">func</span> f() {\n</code></pre>\n")
+  var wn i64 = strlen("<pre><code class=\"language-ruby\">x &lt; y\n</code></pre>\n<pre><code class=\"language-ov\"><span class=\"tok-kw\">func</span> f() {\n</code></pre>\n")
+  if !Md(io, s, sn, w, wn) {
+    return 1
+  }
+  return 0
+}
+
+func TestTera(io *ovid/io.Cap) i64 {
+  var a *Page = ovid/io.Alloc(io, sizeof(Page)) as *Page
+  a.title = strptr("A")
+  a.titlen = 1
+  a.href = strptr("/a/")
+  a.hrefn = 3
+  a.date = strptr("2020-01-01")
+  a.daten = 10
+  var b *Page = ovid/io.Alloc(io, sizeof(Page)) as *Page
+  b.title = strptr("B & C")
+  b.titlen = 5
+  b.href = strptr("/b/")
+  b.hrefn = 3
+  a.next = b
+  a.list = a
+  b.list = a
+  var tpl i64 = strptr("{% for page in pages %}<a href=\"{{ page.href }}\">{{ page.title }}</a>{% if page.date %} {{ page.date }}{% else %} undated{% endif %}{% endfor %}")
+  var n i64 = strlen("{% for page in pages %}<a href=\"{{ page.href }}\">{{ page.title }}</a>{% if page.date %} {{ page.date }}{% else %} undated{% endif %}{% endfor %}")
+  var got *ovid/mem.Buf = Apply(io, tpl, n, a)
+  var w i64 = strptr("<a href=\"/a/\">A</a> 2020-01-01<a href=\"/b/\">B &amp; C</a> undated")
+  if !Same(io, got.data, got.len, w, strlen("<a href=\"/a/\">A</a> 2020-01-01<a href=\"/b/\">B &amp; C</a> undated")) {
+    return 1
+  }
+  a.title = strptr("A & B")
+  a.titlen = 5
+  var filt i64 = strptr("{{ title }}|{{ title | safe }}|{{ title | escape }}")
+  var fn i64 = strlen("{{ title }}|{{ title | safe }}|{{ title | escape }}")
+  var g2 *ovid/mem.Buf = Apply(io, filt, fn, a)
+  var w2 i64 = strptr("A &amp; B|A & B|A &amp; B")
+  if !Same(io, g2.data, g2.len, w2, strlen("A &amp; B|A & B|A &amp; B")) {
+    return 2
+  }
+  return 0
+}

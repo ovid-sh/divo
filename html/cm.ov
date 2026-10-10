@@ -1,0 +1,356 @@
+package html
+
+import bytes
+import ovid/io
+import ovid/mem
+
+// Scan is the markdown line state. mode is 0 none, 1 paragraph, 2 ul,
+// 3 fence, 4 ol, 5 quote. fn is the opening fence length. lang is the
+// info word: it becomes class="language-...", and ov is highlighted.
+type Scan struct {
+  mode i64
+  fn i64
+  lang i64
+  langn i64
+}
+
+// Fence is an opening ``` fence. n is the run of backticks.
+type Fence struct {
+  ok bool
+  n i64
+  lang i64
+  langn i64
+}
+
+func IsAlnum(c i64) bool {
+  var dig bool = c >= 48 && c <= 57
+  var up bool = c >= 65 && c <= 90
+  var lo bool = c >= 97 && c <= 122
+  return dig || up || lo
+}
+
+func IsIdentStart(c i64) bool {
+  return c == 95 || (c >= 65 && c <= 90) || (c >= 97 && c <= 122)
+}
+
+func IsIdentCont(c i64) bool {
+  return c == 95 || IsAlnum(c)
+}
+
+// HeadRest is heading text with the optional closing hash run removed.
+// CommonMark only strips that run when a space sits in front of it.
+func HeadRest(io *ovid/io.Cap, p i64, n i64) *bytes.Span {
+  var s *bytes.Span = bytes.Trim(io, p, n)
+  var i i64 = s.n
+  while i > 0 && load8((s.p + i) - 1) == 35 {
+    i = i - 1
+  }
+  if i < s.n && i > 0 && load8((s.p + i) - 1) == 32 {
+    return bytes.Trim(io, s.p, i)
+  }
+  return s
+}
+
+// IsRule is a CommonMark thematic break: three or more of one of - * _,
+// with spaces allowed between them and nothing else on the line.
+func IsRule(io *ovid/io.Cap, p i64, n i64) bool {
+  var s *bytes.Span = bytes.Trim(io, p, n)
+  if s.n < 3 {
+    return false
+  }
+  var c i64 = 0
+  var k i64 = 0
+  var i i64 = 0
+  while i < s.n {
+    var ch i64 = load8(s.p + i)
+    if ch == 32 || ch == 9 {
+      i = i + 1
+    } else if ch == 45 || ch == 42 || ch == 95 {
+      if c == 0 {
+        c = ch
+      }
+      if ch != c {
+        return false
+      }
+      k = k + 1
+      i = i + 1
+    } else {
+      return false
+    }
+  }
+  return k >= 3
+}
+
+// UlMark is 2 when the line is "- ", "* ", or "+ ", else 0.
+func UlMark(p i64, n i64) i64 {
+  if n >= 2 && load8(p + 1) == 32 {
+    var c i64 = load8(p)
+    if c == 45 || c == 42 || c == 43 {
+      return 2
+    }
+  }
+  return 0
+}
+
+// OlMark is the width of "1. " or "1) " (up to 9 digits), else 0.
+// The number itself is ignored: the list always starts at 1.
+func OlMark(p i64, n i64) i64 {
+  var i i64 = 0
+  while i < n && i < 9 && load8(p + i) >= 48 && load8(p + i) <= 57 {
+    i = i + 1
+  }
+  if i == 0 || i >= n {
+    return 0
+  }
+  var c i64 = load8(p + i)
+  if c != 46 && c != 41 {
+    return 0
+  }
+  if (i + 1) >= n || load8(p + i + 1) != 32 {
+    return 0
+  }
+  return i + 2
+}
+
+func IsQuote(p i64, n i64) bool {
+  return n >= 1 && load8(p) == 62
+}
+
+// QuoteBody is the text after ">" and one optional space.
+func QuoteBody(io *ovid/io.Cap, p i64, n i64) *bytes.Span {
+  if n >= 2 && load8(p + 1) == 32 {
+    return bytes.New(io, p + 2, n - 2)
+  }
+  if n >= 1 {
+    return bytes.New(io, p + 1, n - 1)
+  }
+  return bytes.New(io, p, 0)
+}
+
+func SafeLang(c i64) bool {
+  return IsAlnum(c) || c == 95 || c == 45 || c == 43
+}
+
+// InfoWord is the first word of a fence info string, cut to the charset
+// that can sit in a class attribute without further quoting.
+func InfoWord(io *ovid/io.Cap, p i64, n i64) *bytes.Span {
+  var s *bytes.Span = bytes.Trim(io, p, n)
+  var i i64 = 0
+  while i < s.n && !bytes.IsSpace(load8(s.p + i)) {
+    i = i + 1
+  }
+  var j i64 = 0
+  while j < i && SafeLang(load8(s.p + j)) {
+    j = j + 1
+  }
+  return bytes.New(io, s.p, j)
+}
+
+func HasTick(p i64, n i64) bool {
+  return bytes.IndexByte(p, n, 96) >= 0
+}
+
+// FenceOf parses an opening backtick fence. A line of only backticks is
+// also an opening fence; the caller checks the close first while inside one.
+func FenceOf(io *ovid/io.Cap, p i64, n i64) *Fence {
+  var f *Fence = ovid/io.Alloc(io, sizeof(Fence)) as *Fence
+  var i i64 = 0
+  while i < n && i < 3 && load8(p + i) == 32 {
+    i = i + 1
+  }
+  var k i64 = 0
+  while (i + k) < n && load8(p + i + k) == 96 {
+    k = k + 1
+  }
+  if k < 3 {
+    return f
+  }
+  var rest *bytes.Span = bytes.Trim(io, (p + i) + k, n - (i + k))
+  if HasTick(rest.p, rest.n) {
+    return f
+  }
+  var w *bytes.Span = InfoWord(io, rest.p, rest.n)
+  f.ok = true
+  f.n = k
+  f.lang = w.p
+  f.langn = w.n
+  return f
+}
+
+// FenceDone reports a closing fence at least as long as the opener,
+// with no info string.
+func FenceDone(p i64, n i64, need i64) bool {
+  var i i64 = 0
+  while i < n && i < 3 && load8(p + i) == 32 {
+    i = i + 1
+  }
+  var k i64 = 0
+  while (i + k) < n && load8(p + i + k) == 96 {
+    k = k + 1
+  }
+  if k < need || k < 3 {
+    return false
+  }
+  var j i64 = i + k
+  while j < n {
+    if !bytes.IsSpace(load8(p + j)) {
+      return false
+    }
+    j = j + 1
+  }
+  return true
+}
+
+func OpenCode(io *ovid/io.Cap, b *ovid/mem.Buf, lang i64, langn i64) i64 {
+  if langn == 0 {
+    ovid/mem.WBytes(io, b, strptr("<pre><code>"), strlen("<pre><code>"))
+    return 0
+  }
+  ovid/mem.WBytes(io, b, strptr("<pre><code class=\"language-"), strlen("<pre><code class=\"language-"))
+  Escape(io, b, lang, langn)
+  ovid/mem.WBytes(io, b, strptr("\">"), 2)
+  return 0
+}
+
+func IsOv(p i64, n i64) bool {
+  if n == 2 && ovid/mem.Eq(p, n, strptr("ov"), 2) {
+    return true
+  }
+  return n == 4 && ovid/mem.Eq(p, n, strptr("ovid"), 4)
+}
+
+func IsKw(p i64, n i64) bool {
+  if n == 2 {
+    return ovid/mem.Eq(p, n, strptr("if"), 2)
+  }
+  if n == 3 {
+    return ovid/mem.Eq(p, n, strptr("var"), 3)
+  }
+  if n == 4 {
+    var fn bool = ovid/mem.Eq(p, n, strptr("func"), 4)
+    var el bool = ovid/mem.Eq(p, n, strptr("else"), 4)
+    var tr bool = ovid/mem.Eq(p, n, strptr("true"), 4)
+    var ty bool = ovid/mem.Eq(p, n, strptr("type"), 4)
+    return fn || el || tr || ty
+  }
+  if n == 5 {
+    var wh bool = ovid/mem.Eq(p, n, strptr("while"), 5)
+    var fa bool = ovid/mem.Eq(p, n, strptr("false"), 5)
+    return wh || fa
+  }
+  if n == 6 {
+    var re bool = ovid/mem.Eq(p, n, strptr("return"), 6)
+    var st bool = ovid/mem.Eq(p, n, strptr("struct"), 6)
+    var im bool = ovid/mem.Eq(p, n, strptr("import"), 6)
+    return re || st || im
+  }
+  if n == 7 {
+    return ovid/mem.Eq(p, n, strptr("package"), 7)
+  }
+  return false
+}
+
+func SpanOpen(io *ovid/io.Cap, b *ovid/mem.Buf, cls i64, n i64) i64 {
+  ovid/mem.WBytes(io, b, strptr("<span class=\""), strlen("<span class=\""))
+  ovid/mem.WBytes(io, b, cls, n)
+  ovid/mem.WBytes(io, b, strptr("\">"), 2)
+  return 0
+}
+
+func SpanShut(io *ovid/io.Cap, b *ovid/mem.Buf) i64 {
+  ovid/mem.WBytes(io, b, strptr("</span>"), strlen("</span>"))
+  return 0
+}
+
+// Paint writes one fence line. Only ov and ovid are tokenised. Any other
+// language is escaped text, so a CommonMark fence stays CommonMark HTML
+// apart from the language class on the code tag.
+func Paint(io *ovid/io.Cap, b *ovid/mem.Buf, p i64, n i64, lang i64, langn i64) i64 {
+  if !IsOv(lang, langn) {
+    return Escape(io, b, p, n)
+  }
+  var i i64 = 0
+  while i < n {
+    var c i64 = load8(p + i)
+    var slash bool = c == 47 && (i + 1) < n && load8(p + i + 1) == 47
+    if slash {
+      SpanOpen(io, b, strptr("tok-com"), strlen("tok-com"))
+      Escape(io, b, p + i, n - i)
+      SpanShut(io, b)
+      i = n
+    } else if c == 34 {
+      var j i64 = i + 1
+      var go bool = true
+      while j < n && go {
+        if load8(p + j) == 92 && (j + 1) < n {
+          j = j + 2
+        } else if load8(p + j) == 34 {
+          go = false
+        } else {
+          j = j + 1
+        }
+      }
+      if j < n && load8(p + j) == 34 {
+        j = j + 1
+      }
+      SpanOpen(io, b, strptr("tok-str"), strlen("tok-str"))
+      Escape(io, b, p + i, j - i)
+      SpanShut(io, b)
+      i = j
+    } else if c >= 48 && c <= 57 {
+      var j i64 = i + 1
+      while j < n && load8(p + j) >= 48 && load8(p + j) <= 57 {
+        j = j + 1
+      }
+      SpanOpen(io, b, strptr("tok-num"), strlen("tok-num"))
+      Escape(io, b, p + i, j - i)
+      SpanShut(io, b)
+      i = j
+    } else if IsIdentStart(c) {
+      var j i64 = i + 1
+      while j < n && IsIdentCont(load8(p + j)) {
+        j = j + 1
+      }
+      if IsKw(p + i, j - i) {
+        SpanOpen(io, b, strptr("tok-kw"), strlen("tok-kw"))
+        Escape(io, b, p + i, j - i)
+        SpanShut(io, b)
+      } else {
+        Escape(io, b, p + i, j - i)
+      }
+      i = j
+    } else {
+      EscapeByte(io, b, c)
+      i = i + 1
+    }
+  }
+  return 0
+}
+
+// FindPair finds mark at or after i, not as half of a doubled mark, and
+// not preceded by a space. under asks for the underscore rule: the closer
+// is not followed by a letter or digit.
+func FindPair(p i64, n i64, i i64, mark i64, under bool) i64 {
+  while i < n {
+    if load8(p + i) == mark {
+      var dbl bool = (i + 1) < n && load8(p + i + 1) == mark
+      if dbl {
+        i = i + 2
+      } else if i > 0 && load8(p + i - 1) != 32 && load8(p + i - 1) != 9 {
+        var after bool = true
+        if under && (i + 1) < n && IsAlnum(load8(p + i + 1)) {
+          after = false
+        }
+        if after {
+          return i
+        }
+        i = i + 1
+      } else {
+        i = i + 1
+      }
+    } else {
+      i = i + 1
+    }
+  }
+  return -1
+}
