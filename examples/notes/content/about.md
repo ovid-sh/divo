@@ -13,4 +13,4 @@ Pages are files. A section is a directory. `index.md` is that directory's page, 
 
 ---
 
-It is a proof of concept of [Zola](https://www.getzola.org/)'s pipeline, not a replacement for it. Templates are a slice of Tera, and an `ov` fence is highlighted. There is no Sass and no live reload.
+Templates are a slice of Tera, and an `ov` fence is highlighted. There is no Sass and no live reload.
