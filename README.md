@@ -1,6 +1,6 @@
 # Divo
 
-Divo is a static site generator written in [Ovid](https://github.com/ovid-sh/ovid). It follows the pipeline [Zola](https://www.getzola.org/) is built around: find content, read front matter, render markup, fill one template, and write a directory of HTML. It is a proof of concept of that pipeline, not a replacement for Zola.
+Divo is a static site generator written in [Ovid](https://github.com/ovid-sh/ovid). It finds content, reads front matter, renders markup, fills one template, and writes a directory of HTML.
 
 A site is `config.txt`, `content/**/*.md`, one `templates/page.html`, and an optional `static/` tree. `divo build` reads them and writes `public/`.
 
@@ -57,7 +57,7 @@ Templates are a Tera slice. Spaces inside the tags are ignored.
 
 ## What it does not do
 
-Zola's binary also does the rest of Tera, the rest of CommonMark, syntect highlighting for every language, Sass, taxonomies, pagination, search, image processing, multilingual sites, and a live-reload server. Divo does not. Those are large programs. Ovid has no string type, map, slice, regular expression, or function pointer, so each piece is a hand-written scan over bytes and a linked list of structs. The standard library can read and write files and list directories, which is the part a generator cannot do without. It cannot listen on a socket: an HTTP program is a handler on stdin and stdout. `zola serve` does not fit that shape. `divo build` does.
+The rest of Tera, the rest of CommonMark, highlighting for every language, Sass, taxonomies, pagination, search, image processing, multilingual sites, and a live-reload server are out of scope. Those are large programs. Ovid has no string type, map, slice, regular expression, or function pointer, so each piece is a hand-written scan over bytes and a linked list of structs. The standard library can read and write files and list directories, which is the part a generator cannot do without. It cannot listen on a socket: an HTTP program is a handler on stdin and stdout. A live-reload server does not fit that shape. `divo build` does.
 
 ## Build and run
 
@@ -88,3 +88,5 @@ divo/     build: load, sort, render, write
 ```
 
 There is no per-allocation free. `Build` keeps the inputs and drops each rendered page with `ovid/io.MarkHeap` and `ResetHeap` after the file is written. A page's bytes have to be finished before that reset: the mark is the free.
+
+Divo is inspired by [Zola](https://www.getzola.org/).
